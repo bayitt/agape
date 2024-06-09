@@ -1,10 +1,12 @@
 package main;
 import (
+	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/resend/resend-go/v2"
 	"encoding/json"
-	"os"
 	"path/filepath"
+	"net/http"
+	"os"
 	"fmt"
 	"time"
 )
@@ -29,9 +31,12 @@ type Record struct {
 func main() {
 	godotenv.Load();
 
-	translation, _ := getCurrentTranslation();
-
-	sendAgapeEmail(translation.Language, translation.Text);
+	router := gin.Default();
+	router.POST("/send", func(context *gin.Context) {
+		translation, _ := getCurrentTranslation();
+		sendAgapeEmail(translation.Language, translation.Text);
+	});
+	router.Run("localhost:8080");
 }
 
 func getCurrentTranslation() (Translation, int) {
