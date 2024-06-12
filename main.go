@@ -1,8 +1,9 @@
 package main;
 import (
+	"github.com/resend/resend-go/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-	"github.com/resend/resend-go/v2"
+	"html/template"
 	"encoding/json"
 	"path/filepath"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"fmt"
 	"time"
+	"bytes"
 )
 
 
@@ -34,10 +36,17 @@ func main() {
 
 	router := gin.Default();
 	router.POST("/send", sendRouteHandler);
-	router.Run("localhost:8080");
+	router.Run(":8080");
 }
 
 func sendRouteHandler(context *gin.Context) {
+	directory, _ := os.Getwd();
+	templatePath := filepath.Join(directory, "templates", "agape.html");
+	templateString, _ := os.ReadFile(templatePath);
+	templateObject, _ := template.New("Agape Template").Parse(string(templateString));
+
+	var parsedTemplateString bytes.Buffer;
+
 	translation, index, err := getCurrentTranslation();
 
 	if err != nil && err.Error() == "DAY_TRANSLATION_ALREADY_SENT" {
@@ -51,7 +60,9 @@ func sendRouteHandler(context *gin.Context) {
 		return; 
 	}
 
-	mailErr := sendEmail(os.Getenv("RECIPIENT_EMAIL"), fmt.Sprintf("Today's language is %s!", translation.Language), translation.Text);
+	templateObject.Execute(&parsedTemplateString, map[string]string{ "Translation": translation.Text, "Language": translation.Language });
+
+	mailErr := sendEmail(os.Getenv("RECIPIENT_EMAIL"), fmt.Sprintf("Today's language is %s!", translation.Language), parsedTemplateString.String());
 
 	if mailErr == nil {
 		sendEmail(os.Getenv("ADMIN_EMAIL"), fmt.Sprintf("Today's Language - %s", translation.Language), fmt.Sprintf("Today's Email has been sent - %s", translation.Language))
@@ -82,7 +93,7 @@ func getCurrentTranslation() (Translation, int, error) {
 
 	date := (time.Now()).Format("2006-01-02");
 
-	if *recordData.Date == date {
+	if recordData.Date != nil && *recordData.Date == date {
 		return translationData.Translations[0], index, errors.New("DAY_TRANSLATION_ALREADY_SENT");
 	} 
 
@@ -93,12 +104,12 @@ func getCurrentTranslation() (Translation, int, error) {
 	return translationData.Translations[index], index, nil;
 }
 
-func sendEmail(recipient string, subject string, text string,) error {
+func sendEmail(recipient string, subject string, html string,) error {
 	client := resend.NewClient(os.Getenv("RESEND_API_KEY"));
 	params := &resend.SendEmailRequest{
         To:      []string{recipient},
         From:    os.Getenv("MAIL_FROM"),
-        Text:    text,
+        Html:    html,
         Subject: subject,
     }
 
