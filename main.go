@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"net/http"
+	"errors"
 	"os"
 	"fmt"
 	"time"
@@ -23,7 +24,7 @@ type TranslationData struct {
 
 type Record struct {
 	Index  		int  		`json:"index"`
-	Timestamp   *time.Time  `json:"timestamp"`
+	Date        *string     `json:"date"`
 	Language	*string		`json:"language"` 
 }
 
@@ -32,14 +33,38 @@ func main() {
 	godotenv.Load();
 
 	router := gin.Default();
-	router.POST("/send", func(context *gin.Context) {
-		translation, _ := getCurrentTranslation();
-		sendAgapeEmail(translation.Language, translation.Text);
-	});
+	router.POST("/send", sendRouteHandler);
 	router.Run("localhost:8080");
 }
 
-func getCurrentTranslation() (Translation, int) {
+func sendRouteHandler(context *gin.Context) {
+	translation, index, err := getCurrentTranslation();
+
+	if err != nil && err.Error() == "DAY_TRANSLATION_ALREADY_SENT" {
+		context.IndentedJSON(http.StatusBadRequest, gin.H{"message": "Translation for today has been sent already"});
+		return;
+	}
+
+	if err != nil && err.Error() == "TRANSLATIONS_EXHAUSTED" {
+		sendEmail(os.Getenv("ADMIN_EMAIL"), "All translations have been sent", "There are no more translations to be sent. Terminate the program.");
+		context.IndentedJSON(http.StatusBadRequest, gin.H{"message": "All translations have been sent!"});
+		return; 
+	}
+
+	mailErr := sendEmail(os.Getenv("RECIPIENT_EMAIL"), fmt.Sprintf("Today's language is %s!", translation.Language), translation.Text);
+
+	if mailErr == nil {
+		sendEmail(os.Getenv("ADMIN_EMAIL"), fmt.Sprintf("Today's Language - %s", translation.Language), fmt.Sprintf("Today's Email has been sent - %s", translation.Language))
+		updateRecord(translation.Language, index);
+		context.IndentedJSON(http.StatusOK, gin.H{"message": "Agape email sent successfully"});
+		return;
+	}
+
+	sendEmail(os.Getenv("ADMIN_EMAIL"), fmt.Sprintf("Today's Language - %s", translation.Language), fmt.Sprintf("Today's Email (%s) was not sent. There was an issue", translation.Language))
+	context.IndentedJSON(http.StatusOK, gin.H{"message": "There was a problem sending the Agape email"});
+}
+
+func getCurrentTranslation() (Translation, int, error) {
 	directory, _ := os.Getwd();
 	translationsPath := filepath.Join(directory, "translations.json");
 	translationsContents, _ := os.ReadFile(translationsPath);
@@ -54,19 +79,40 @@ func getCurrentTranslation() (Translation, int) {
 	json.Unmarshal(recordContents, &recordData);
 
 	index := recordData.Index + 1;
-	return translationData.Translations[index], index;
+
+	date := (time.Now()).Format("2006-01-02");
+
+	if *recordData.Date == date {
+		return translationData.Translations[0], index, errors.New("DAY_TRANSLATION_ALREADY_SENT");
+	} 
+
+	if index > len(translationData.Translations) - 1 {
+		return translationData.Translations[0], index, errors.New("TRANSLATIONS_EXHAUSTED");
+	}
+
+	return translationData.Translations[index], index, nil;
 }
 
-func sendAgapeEmail(language string, translation string) error {
+func sendEmail(recipient string, subject string, text string,) error {
 	client := resend.NewClient(os.Getenv("RESEND_API_KEY"));
 	params := &resend.SendEmailRequest{
-        To:      []string{os.Getenv("RECIPIENT_EMAIL")},
+        To:      []string{recipient},
         From:    os.Getenv("MAIL_FROM"),
-        Text:    translation,
-        Subject: fmt.Sprintf("Today's language is %s", language),
+        Text:    text,
+        Subject: subject,
     }
 
 	_, err := client.Emails.Send(params);
 
 	return err;
+}
+
+func updateRecord(language string, index int) {
+	date := (time.Now()).Format("2006-01-02");
+	record := &Record{ Index: index, Language: &language, Date: &date }
+	recordJson, _ := json.Marshal(record)
+
+	directory, _ := os.Getwd()
+	recordPath := filepath.Join(directory, "record.json")
+	os.WriteFile(recordPath, recordJson, 0777)
 }
