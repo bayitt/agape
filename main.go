@@ -35,7 +35,7 @@ func main() {
 
 	router := gin.Default()
 	router.POST("/send", sendRouteHandler)
-	router.Run("localhost:8080")
+	router.Run(":8080")
 }
 
 func sendRouteHandler(context *gin.Context) {
